@@ -1,0 +1,118 @@
+---
+- name: Install Docker and Docker Compose and Jenkins backup
+  hosts: all
+  become: true
+  vars:
+    ansible_user: ubuntu
+    docker_projects_dir: /home/ubuntu/docker_projects
+    #    jenkins_backup_url: s3://jenkins-devops-backup-2024/jenkins_backup_2024_07/jenkins_backup.tar.gz
+    #    jenkins_backup_local: "{{ docker_projects_dir }}/jenkins.tar.gz"
+    docker_compose_jenkins_file: "{{ docker_projects_dir }}/docker-compose.yml"
+  tasks:
+    # Docker and Docker Compose Installation Tasks
+    - name: Update package index
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies for Docker
+      apt:
+        name:
+          [
+            "apt-transport-https",
+            "ca-certificates",
+            "gnupg",
+            "software-properties-common",
+          ]
+        state: present
+
+    - name: Import GPG key for Docker repository
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        id: 0EBFCD88
+
+    - name: Add source list for Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu noble stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+
+    - name: Install Docker Compose
+      apt:
+        name: docker-compose
+        state: present
+
+    - name: Create a new group for the Docker socket
+      group:
+        name: docker
+        state: present
+
+    - name: Create a new user for the Docker socket
+      user:
+        name: docker
+        group: docker
+        shell: /bin/false
+        system: yes
+        create_home: no
+
+    - name: Create a new directory for Docker Compose projects
+      file:
+        path: "{{ docker_projects_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy over Docker compose file
+      copy:
+        src: docker-compose.yaml
+        dest: "{{ docker_compose_jenkins_file }}"
+
+    - name: Add user to the docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+      notify:
+        - Reload systemd daemon to pick up new Docker service configuration
+        - daemon-reload
+    - name: Ensure Jenkins volume directory exists
+      file:
+        path: /home/ubuntu/docker_projects/var/lib/jenkins
+        state: directory
+        owner: ubuntu
+        group: docker
+        mode: "0755"
+
+    - name: Start Jenkins using Docker Compose
+      command: "docker-compose -f {{ docker_compose_jenkins_file }} up -d"
+
+  post_tasks:
+    - name: Reload systemd daemon to pick up new Docker service configuration
+      systemd:
+        name: docker
+        state: restarted
+    - name: daemon-reload
+      command: systemctl daemon-reload
+#    # Jenkins Backup Tasks
+#    - name: Install AWS CLI using Snap
+#      community.general.snap:
+#        name: aws-cli
+#        classic: yes
+#
+#
+#    - name: Download Jenkins backup from AWS S3
+#      command: "aws s3 cp {{ jenkins_backup_url }} {{ jenkins_backup_local }}"
+#
+#    - name: Unzip Jenkins backup
+#      command: "tar -xvf {{ jenkins_backup_local }} -C {{ docker_projects_dir }}"
+#    - name: Set ownership of Jenkins project files
+#      file:
+#        path: "{{ docker_projects_dir }}/var"
+#        state: directory
+#        recurse: yes
+#        owner: ubuntu
+#        group: docker
+#
