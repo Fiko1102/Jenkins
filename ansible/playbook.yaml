@@ -1,11 +1,13 @@
 ---
-- name: Install Docker and Docker Compose and Jenkins backup
+- name: Install Docker, Docker Compose, and manage Jenkins backup
   hosts: all
   become: true
   vars:
     ansible_user: ubuntu
     docker_projects_dir: /home/ubuntu/docker_projects
-    docker_compose_jenkins_file: "{{ docker_projects_dir }}/docker-compose.yml"
+    docker_compose_jenkins_file: "{{ docker_projects_dir }}/docker-compose.yaml"
+    jenkins_data_dir: /home/ubuntu/docker_projects/var/lib/jenkins
+    jenkins_backup_dir: /home/ubuntu/docker_projects/jenkins_backups
 
   tasks:
     - name: Update package index
@@ -68,14 +70,33 @@
 
     - name: Ensure Jenkins volume directory exists
       file:
-        path: /home/ubuntu/docker_projects/var/lib/jenkins
+        path: "{{ jenkins_data_dir }}"
         state: directory
         owner: ubuntu
         group: docker
         mode: "0755"
 
     - name: Start Jenkins using Docker Compose
-      command: "docker-compose -f {{ docker_compose_jenkins_file }} up -d"
+      command: "docker compose -f {{ docker_compose_jenkins_file }} up -d"
+
+    - name: Create backup directory for Jenkins
+      file:
+        path: "{{ jenkins_backup_dir }}"
+        state: directory
+        owner: ubuntu
+        group: docker
+        mode: "0755"
+
+    - name: Backup Jenkins data using archive module
+      ansible.builtin.archive:
+        path: "{{ jenkins_data_dir }}"
+        dest: "{{ jenkins_backup_dir }}/jenkins_backup_{{ ansible_date_time.date }}.tar.gz"
+        format: gz
+
+    - name: Start Jenkins container after backup
+      command: "docker compose -f {{ docker_compose_jenkins_file }} up -d"
+      args:
+        chdir: "{{ docker_projects_dir }}"
 
   handlers:
     - name: Reload systemd daemon
